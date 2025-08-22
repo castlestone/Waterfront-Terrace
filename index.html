@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ask-My-Docs – Waterfront Terrace</title>
+  <style>
+    :root { --bg:#0b0c10; --card:#1f2833; --text:#eee; --muted:#c5c6c7; }
+    body { margin:0; background:var(--bg); color:var(--text); font: 16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    .wrap { max-width: 840px; margin: 0 auto; padding: 2rem 1rem 5rem; }
+    h1 { font-size: clamp(28px, 4vw, 44px); margin: 0 0 0.25rem; }
+    p.lede { color: var(--muted); margin-top: 0.25rem; }
+    .hero { margin: 1.5rem 0 2.5rem; background: var(--card); padding: 1.25rem 1.5rem; border-radius: 16px; box-shadow: 0 6px 20px rgba(0,0,0,0.35); }
+    .card { background: var(--card); border-radius: 16px; padding: 1rem; box-shadow: 0 6px 26px rgba(0,0,0,0.35); }
+    #chat { display:flex; flex-direction:column; gap:.5rem; height: 50vh; overflow:auto; padding:.5rem; border-radius: 12px; background: rgba(255,255,255,0.03); }
+    .bubble { padding: .65rem .8rem; border-radius: 12px; max-width: 85%; white-space: pre-wrap; }
+    .user { align-self:flex-end; background: rgba(255,255,255,0.08); }
+    .assistant { align-self:flex-start; background: rgba(0,0,0,0.25); }
+    form { display:flex; gap:.5rem; margin-top: .75rem; }
+    textarea { flex:1; resize: vertical; min-height: 48px; max-height: 160px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.06); color: var(--text); padding:.75rem; }
+    button { border:0; border-radius: 12px; padding: .75rem 1rem; font-weight: 600; background: #45a29e; color: #071418; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    footer { margin-top: 1rem; color: var(--muted); font-size: 13px; }
+    .sources { opacity:.85; margin-top:.5rem; font-size: 14px; }
+    .tag { display:inline-block; padding:.15rem .5rem; border-radius:999px; background:#111; color:#ddd; font-size:12px; margin-left:.5rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Ask Waterfront Terrace <span class="tag">governance</span></h1>
+      <p class="lede">Answers based only on the official governing documents.</p>
+    </header>
+
+    <div class="hero">
+      <p>Welcome to the <strong>Waterfront Terrace Governance Assistant</strong>. This tool provides clear, document-based answers to questions about how Halifax County Condominium Corporation No. 227 is governed. All responses are drawn strictly from the official governing documents — including the Declaration, By-laws, and the Nova Scotia Condominium Act and Regulations. If the information is not in these documents, the assistant will tell you so. Use this page to quickly find accurate guidance on meetings, voting, common element rules, contractor access, financial authority, and more.</p>
+    </div>
+
+    <div class="card">
+      <div id="chat" aria-live="polite" aria-busy="false"></div>
+      <form id="form">
+        <textarea id="q" placeholder="Ask a question about your docs…" required></textarea>
+        <button id="send">Ask</button>
+      </form>
+      <div class="sources" id="sources"></div>
+    </div>
+
+    <footer>Pro tip: ask specific questions for best retrieval (e.g., “What are the quarterly reporting requirements?”).</footer>
+  </div>
+
+<script>
+const chat = document.getElementById('chat');
+const form = document.getElementById('form');
+const q = document.getElementById('q');
+const send = document.getElementById('send');
+const sourcesEl = document.getElementById('sources');
+
+function bubble(text, cls) {
+  const d = document.createElement('div'); d.className = `bubble ${cls}`; d.textContent = text; chat.appendChild(d); chat.scrollTop = chat.scrollHeight; return d;
+}
+
+function showSources(sources) {
+  if (!sources || !sources.length) { sourcesEl.textContent = ''; return; }
+  sourcesEl.innerHTML = 'Sources: ' + sources.map(s => `<code>${s}</code>`).join(', ');
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = q.value.trim();
+  if (!msg) return;
+  bubble(msg, 'user'); q.value=''; q.focus();
+  const a = bubble('', 'assistant'); showSources([]);
+  send.disabled = true; chat.setAttribute('aria-busy','true');
+  try {
+    const resp = await fetch('/chat', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ message: msg })
+    });
+    if (!resp.ok || !resp.body) {
+      a.textContent = `Error: ${resp.status} ${resp.statusText}`;
+      return;
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let sources = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream:true});
+      const lines = buffer.split('\n');
+      for (let i=0; i<lines.length-1; i++) {
+        const line = lines[i].trimStart();
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '' || data === '[DONE]') continue;
+        try {
+          const evt = JSON.parse(data);
+          if (evt.output_text) { a.textContent += evt.output_text; }
+          if (evt.sources) { sources = evt.sources; showSources(sources); }
+        } catch {}
+      }
+      buffer = lines[lines.length-1];
+      chat.scrollTop = chat.scrollHeight;
+    }
+  } catch (err) {
+    a.textContent = 'Network error: ' + err.message;
+  } finally {
+    send.disabled = false; chat.setAttribute('aria-busy','false');
+  }
+});
+</script>
+</body>
+</html>

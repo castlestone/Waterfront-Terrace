@@ -1,0 +1,7 @@
+# Keep docs private
+docs/**
+!docs/.gitkeep
+
+# Node & env
+node_modules/
+.env
