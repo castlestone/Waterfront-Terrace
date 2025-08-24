@@ -1,7 +1,6 @@
 // /functions/chat.js
 // Cloudflare Pages Function → OpenAI Responses API + File Search (streaming SSE)
-// Env vars required: OPENAI_API_KEY, OPENAI_VECTOR_STORE_ID
-// Optional: SYSTEM_PROMPT, MODEL_ID
+// Env vars: OPENAI_API_KEY, OPENAI_VECTOR_STORE_ID; optional: SYSTEM_PROMPT, MODEL_ID
 
 const MODEL_FALLBACK = "gpt-4.1-mini";
 const ALLOWED_ORIGINS = ["*"]; // tighten in prod
@@ -23,28 +22,82 @@ export const onRequestPost = async ({ request, env }) => {
     return new Response("Forbidden", { status: 403, headers: cors(origin) });
   }
 
-  // 1) Parse JSON body
+  // Parse
   let body;
-  try { body = await request.json(); }
-  catch { return new Response("Bad JSON", { status: 400, headers: cors(origin) }); }
+  try { body = await request.json(); } catch { return new Response("Bad JSON", { status: 400, headers: cors(origin) }); }
   const userMessage = (body?.message || "").toString().slice(0, 4000).trim();
   if (!userMessage) return new Response("Missing 'message'", { status: 400, headers: cors(origin) });
 
-  // 2) Env checks
+  // Env
   const apiKey = env.OPENAI_API_KEY;
   const vectorStoreId = env.OPENAI_VECTOR_STORE_ID;
   if (!apiKey || !vectorStoreId) {
-    return new Response("Server not configured (OPENAI_API_KEY / OPENAI_VECTOR_STORE_ID)", {
-      status: 500, headers: cors(origin)
-    });
+    return new Response("Server not configured (OPENAI_API_KEY / OPENAI_VECTOR_STORE_ID)", { status: 500, headers: cors(origin) });
   }
-
   const model = env.MODEL_ID || MODEL_FALLBACK;
   const systemPrompt =
     env.SYSTEM_PROMPT ||
     "Answer only using the provided documents. If not present, say: \"I don't know based on the provided documents.\"";
 
-  // 3) Responses payload — File Search configured on the tool (no attachments/tool_resources)
+  // ---- Helpers ----
+  const stripExt = (name) => {
+    if (!name) return name;
+    const i = name.lastIndexOf(".");
+    return i > 0 ? name.slice(0, i) : name;
+  };
+
+  // Pretty labels tailored to your four docs
+  function prettyTitle(rawName) {
+    const name = (rawName || "").toLowerCase();
+    // Normalize common tokens
+    const normalized = rawName
+      .replace(/_/g, " ")
+      .replace(/\b(final|official|accepted|amendment|rev|ver|v\d+)\b/ig, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+    const hccc = "Halifax County Condominium Corporation No. 227";
+
+    if (name.includes("by-law") || name.includes("bylaws") || name.includes("by-laws")) {
+      return `By-laws of ${hccc}`;
+    }
+    if (name.includes("declaration")) {
+      // If you like, detect "amendment" separately and format it differently.
+      return `Declaration of ${hccc}`;
+    }
+    if (name.includes("condominium act")) {
+      return `The Nova Scotia Condominium Act`;
+    }
+    if (name.includes("regulation")) {
+      return `The Nova Scotia Condominium Regulations`;
+    }
+    return stripExt(normalized);
+  }
+
+  async function preloadFileMap(vsId) {
+    // Build map: file_id -> filename for everything in this store
+    const fileMap = new Map();
+    const headers = { Authorization: `Bearer ${apiKey}` };
+
+    const vsResp = await fetch(`https://api.openai.com/v1/vector_stores/${vsId}/files`, { headers });
+    if (vsResp.ok) {
+      const { data = [] } = await vsResp.json();
+      // Resolve each id → filename
+      await Promise.all(
+        data.map(async (item) => {
+          try {
+            const r = await fetch(`https://api.openai.com/v1/files/${item.id}`, { headers });
+            if (r.ok) {
+              const j = await r.json();
+              if (j?.id) fileMap.set(j.id, j.filename || j.id);
+            }
+          } catch {}
+        })
+      );
+    }
+    return fileMap; // may be empty if store has no files
+  }
+
   const payload = {
     model,
     instructions: systemPrompt,
@@ -53,7 +106,10 @@ export const onRequestPost = async ({ request, env }) => {
     stream: true
   };
 
-  // 4) Call OpenAI (streaming)
+  // Preload store filenames (best-effort)
+  const fileMapPromise = preloadFileMap(vectorStoreId);
+
+  // Call OpenAI
   const upstream = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -62,53 +118,22 @@ export const onRequestPost = async ({ request, env }) => {
 
   if (!upstream.ok || !upstream.body) {
     const text = await upstream.text().catch(() => "");
-    return new Response(`Upstream error: ${upstream.status} ${text}`, {
-      status: 502, headers: cors(origin)
-    });
+    return new Response(`Upstream error: ${upstream.status} ${text}`, { status: 502, headers: cors(origin) });
   }
 
-  // 5) Stream transform → forward chunks + collect REAL sources (file IDs)
+  // Stream transform
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   let full = "";
-  const fileIds = new Set();     // collect file_id(s) from tool results
-  const nameHints = new Map();   // file_id -> any name seen in events (may be generic)
-
-  // helper: strip final extension (e.g., ".pdf"); keeps names with dots elsewhere intact
-  const stripExt = (name) => {
-    if (!name) return name;
-    const i = name.lastIndexOf(".");
-    return i > 0 ? name.slice(0, i) : name;
-  };
-
-  async function resolveDisplayNames(ids) {
-    const out = [];
-    for (const id of ids) {
-      try {
-        const r = await fetch(`https://api.openai.com/v1/files/${id}`, {
-          headers: { Authorization: `Bearer ${apiKey}` }
-        });
-        if (r.ok) {
-          const j = await r.json();
-          out.push(stripExt(j.filename || id));
-        } else {
-          out.push(stripExt(nameHints.get(id) || id));
-        }
-      } catch {
-        out.push(stripExt(nameHints.get(id) || id));
-      }
-    }
-    // Dedup while preserving order
-    return [...new Set(out)];
-  }
+  const usedIds = new Set();
+  const nameHints = new Map(); // if we see any names in events
 
   const stream = new ReadableStream({
     async start(controller) {
       const reader = upstream.body.getReader();
       let buffer = "";
 
-      const sendJSON = (obj) =>
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+      const sendJSON = (obj) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
 
       try {
         while (true) {
@@ -128,7 +153,7 @@ export const onRequestPost = async ({ request, env }) => {
             try {
               const evt = JSON.parse(data);
 
-              // A) Text deltas/chunks
+              // A) Text chunks
               if (typeof evt?.delta === "string") {
                 full += evt.delta;
                 sendJSON({ output_text: evt.delta });
@@ -137,7 +162,7 @@ export const onRequestPost = async ({ request, env }) => {
                 sendJSON({ output_text: evt.output_text });
               }
 
-              // B) Collect file IDs from tool results (covering common shapes)
+              // B) File Search results: collect file IDs (cover common shapes)
               const candidates = [];
               if (evt?.results && Array.isArray(evt.results)) candidates.push(...evt.results);
               if (evt?.type && String(evt.type).includes("file_search") && Array.isArray(evt.results)) candidates.push(...evt.results);
@@ -146,7 +171,7 @@ export const onRequestPost = async ({ request, env }) => {
                 const f = r.file || {};
                 const id = f.id || r.file_id;
                 if (!id) continue;
-                fileIds.add(id);
+                usedIds.add(id);
                 const hint = f.filename || r.filename || r.display_name || r.name;
                 if (hint) nameHints.set(id, hint);
               }
@@ -154,15 +179,37 @@ export const onRequestPost = async ({ request, env }) => {
               // ignore non-JSON lines
             }
           }
-
           buffer = lines[lines.length - 1];
         }
 
-        // Resolve IDs → filenames (without extensions) for display
-        const sources = await resolveDisplayNames(fileIds);
+        // Build final sources (prefer true filenames from store map, else resolve per-id, else hint)
+        const headers = { Authorization: `Bearer ${apiKey}` };
+        const fileMap = await fileMapPromise.catch(() => new Map());
+        const sources = [];
+        for (const id of usedIds) {
+          let name = fileMap.get(id);
+          if (!name) {
+            // fallback: resolve this id now
+            try {
+              const r = await fetch(`https://api.openai.com/v1/files/${id}`, { headers });
+              if (r.ok) {
+                const j = await r.json();
+                name = j.filename || nameHints.get(id) || id;
+              } else {
+                name = nameHints.get(id) || id;
+              }
+            } catch {
+              name = nameHints.get(id) || id;
+            }
+          }
+          sources.push(prettyTitle(stripExt(name)));
+        }
+
+        // Deduplicate & keep order
+        const finalSources = [...new Set(sources)];
 
         // Final event
-        sendJSON({ done: true, final: full, sources });
+        sendJSON({ done: true, final: full, sources: finalSources });
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
       } catch (err) {
@@ -172,10 +219,6 @@ export const onRequestPost = async ({ request, env }) => {
   });
 
   return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      ...cors(origin)
-    }
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", ...cors(origin) }
   });
 };
