@@ -1,0 +1,41 @@
+/* styles/light.css — lightweight light theme override */
+:root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --text: #0f172a;      /* slate-900 */
+  --muted: #475569;     /* slate-600 */
+  --card: #f8fafc;      /* slate-50 */
+  --border: #e2e8f0;    /* slate-200 */
+  --accent: #2563eb;    /* blue-600 */
+  --accent-foreground: #ffffff;
+}
+
+html, body {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+}
+
+.header, .card, .panel, .box {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+}
+
+input, textarea, select {
+  background: #fff !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+}
+
+button, .btn-primary {
+  background: var(--accent) !important;
+  color: var(--accent-foreground) !important;
+  border: 1px solid var(--accent) !important;
+}
+
+a { color: var(--accent) !important; }
+
+/* if your <html> had class="dark", neuter it */
+html.dark, :root.dark {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+}
