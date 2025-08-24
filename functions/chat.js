@@ -1,13 +1,10 @@
 // /functions/chat.js
 // Cloudflare Pages Function → OpenAI Responses API + File Search (streaming SSE)
-// Env vars required (Pages → Settings → Variables and Secrets):
-//   - OPENAI_API_KEY (Secret)
-//   - OPENAI_VECTOR_STORE_ID (vs_...; Variable or Secret)
-//   - SYSTEM_PROMPT (optional)
-//   - MODEL_ID (optional; default "gpt-4.1-mini")
+// Env vars required: OPENAI_API_KEY, OPENAI_VECTOR_STORE_ID
+// Optional: SYSTEM_PROMPT, MODEL_ID
 
 const MODEL_FALLBACK = "gpt-4.1-mini";
-const ALLOWED_ORIGINS = ["*"]; // tighten to your domain(s) in production
+const ALLOWED_ORIGINS = ["*"]; // tighten in prod
 
 function cors(origin) {
   return {
@@ -47,7 +44,7 @@ export const onRequestPost = async ({ request, env }) => {
     env.SYSTEM_PROMPT ||
     "Answer only using the provided documents. If not present, say: \"I don't know based on the provided documents.\"";
 
-  // 3) Build Responses payload — File Search configured on the tool
+  // 3) Responses payload — File Search configured on the tool (no attachments/tool_resources)
   const payload = {
     model,
     instructions: systemPrompt,
@@ -70,11 +67,40 @@ export const onRequestPost = async ({ request, env }) => {
     });
   }
 
-  // 5) Stream transform → forward chunks + collect *real* sources from file_search results
+  // 5) Stream transform → forward chunks + collect REAL sources (file IDs)
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   let full = "";
-  const foundFiles = new Map(); // file_id -> filename
+  const fileIds = new Set();     // collect file_id(s) from tool results
+  const nameHints = new Map();   // file_id -> any name seen in events (may be generic)
+
+  // helper: strip final extension (e.g., ".pdf"); keeps names with dots elsewhere intact
+  const stripExt = (name) => {
+    if (!name) return name;
+    const i = name.lastIndexOf(".");
+    return i > 0 ? name.slice(0, i) : name;
+  };
+
+  async function resolveDisplayNames(ids) {
+    const out = [];
+    for (const id of ids) {
+      try {
+        const r = await fetch(`https://api.openai.com/v1/files/${id}`, {
+          headers: { Authorization: `Bearer ${apiKey}` }
+        });
+        if (r.ok) {
+          const j = await r.json();
+          out.push(stripExt(j.filename || id));
+        } else {
+          out.push(stripExt(nameHints.get(id) || id));
+        }
+      } catch {
+        out.push(stripExt(nameHints.get(id) || id));
+      }
+    }
+    // Dedup while preserving order
+    return [...new Set(out)];
+  }
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -99,11 +125,10 @@ export const onRequestPost = async ({ request, env }) => {
             const data = line.slice(5).trim();
             if (!data || data === "[DONE]") continue;
 
-            // Each `data:` line is a JSON event from the Responses stream
             try {
               const evt = JSON.parse(data);
 
-              // A) Text deltas or chunks
+              // A) Text deltas/chunks
               if (typeof evt?.delta === "string") {
                 full += evt.delta;
                 sendJSON({ output_text: evt.delta });
@@ -112,27 +137,18 @@ export const onRequestPost = async ({ request, env }) => {
                 sendJSON({ output_text: evt.output_text });
               }
 
-              // B) File Search results (collect true sources)
-              // Events can vary; look for any event that carries `results`
-              if (evt?.results && Array.isArray(evt.results)) {
-                for (const r of evt.results) {
-                  const f = r.file || {};
-                  const id = f.id || r.file_id;
-                  if (!id) continue;
-                  const name = f.filename || r.filename || id;
-                  foundFiles.set(id, name);
-                }
-              }
+              // B) Collect file IDs from tool results (covering common shapes)
+              const candidates = [];
+              if (evt?.results && Array.isArray(evt.results)) candidates.push(...evt.results);
+              if (evt?.type && String(evt.type).includes("file_search") && Array.isArray(evt.results)) candidates.push(...evt.results);
 
-              // C) Some streams nest tool calls under a generic event; be permissive:
-              if (evt?.type && String(evt.type).includes("file_search") && evt?.results) {
-                for (const r of evt.results) {
-                  const f = r.file || {};
-                  const id = f.id || r.file_id;
-                  if (!id) continue;
-                  const name = f.filename || r.filename || id;
-                  foundFiles.set(id, name);
-                }
+              for (const r of candidates) {
+                const f = r.file || {};
+                const id = f.id || r.file_id;
+                if (!id) continue;
+                fileIds.add(id);
+                const hint = f.filename || r.filename || r.display_name || r.name;
+                if (hint) nameHints.set(id, hint);
               }
             } catch {
               // ignore non-JSON lines
@@ -142,12 +158,13 @@ export const onRequestPost = async ({ request, env }) => {
           buffer = lines[lines.length - 1];
         }
 
-        // Final event: include full text + deduped filenames from actual tool results
-        const sources = Array.from(foundFiles.values());
+        // Resolve IDs → filenames (without extensions) for display
+        const sources = await resolveDisplayNames(fileIds);
+
+        // Final event
         sendJSON({ done: true, final: full, sources });
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
-
       } catch (err) {
         controller.error(err);
       }
