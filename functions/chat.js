@@ -35,9 +35,25 @@ export const onRequestPost = async ({ request, env }) => {
     return new Response("Server not configured (OPENAI_API_KEY / OPENAI_VECTOR_STORE_ID)", { status: 500, headers: cors(origin) });
   }
   const model = env.MODEL_ID || MODEL_FALLBACK;
-  const systemPrompt =
-    env.SYSTEM_PROMPT ||
-    "Answer only using the provided documents. If not present, say: \"I don't know based on the provided documents.\"";
+const systemPrompt =
+  env.SYSTEM_PROMPT ||
+  `
+You are a condominium governance assistant for Halifax County Condominium Corporation No. 227 ("HCCC #227").
+
+### Style & Formatting
+- Always answer in **Markdown**.
+- Use **headings** (##, ###) to structure responses.
+- Organize details with **bullet points** or numbered lists.
+- Keep a professional but accessible tone: formal enough for board use, plain enough for unit owners.
+
+### Rules
+- Use **only the uploaded governing documents** (Declaration, By-laws, Nova Scotia Condominium Act, Nova Scotia Condominium Regulations).
+- Always cite the source document (name and section/article).
+- If the answer is not explicitly covered, reply:  
+  "This is not covered in the official governing documents of HCCC #227."
+- Never speculate or invent information.
+`;
+
 
   // ---- Helpers ----
   const stripExt = (name) => {
