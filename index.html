@@ -1,10 +1,11 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ask-My-Docs – Waterfront Terrace</title>
-  <style>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Ask-My-Docs – Waterfront Terrace</title>
+<style>
     :root { --bg:#0b0c10; --card:#1f2833; --text:#eee; --muted:#c5c6c7; }
     body { margin:0; background:var(--bg); color:var(--text); font: 16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
     .wrap { max-width: 840px; margin: 0 auto; padding: 2rem 1rem 5rem; }
@@ -24,34 +25,71 @@
     .sources { opacity:.85; margin-top:.5rem; font-size: 14px; }
     .tag { display:inline-block; padding:.15rem .5rem; border-radius:999px; background:#111; color:#ddd; font-size:12px; margin-left:.5rem; }
   </style>
-  <link rel="stylesheet" href="/styles/light.css" />
-</head>
+<link href="/styles/light.css" rel="stylesheet"/>
+<style>
+/* === Ask box moved to top; faint blue input; growing answers (no scroll) === */
+#chat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+  overflow: visible !important;
+  height: auto !important;
+  max-height: none !important;
+}
+
+.card form#form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  align-items: flex-start;
+}
+
+.card form#form textarea#q {
+  flex: 1;
+  resize: vertical;
+  min-height: 48px;
+  max-height: 200px;
+  border-radius: 12px;
+  border: 1px solid rgba(100,150,255,0.35);
+  background: rgba(100,150,255,0.12); /* faint blue */
+  color: inherit;
+  padding: 0.75rem;
+}
+
+.card form#form textarea#q:focus {
+  outline: none;
+  border-color: rgba(120,170,255,0.7);
+  box-shadow: 0 0 0 3px rgba(120,170,255,0.25);
+}
+
+.card form#form button#send {
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+}
+</style></head>
 <body>
-  <div class="wrap">
-    <header>
-      <h1>Ask Waterfront Terrace <span class="tag">governance</span></h1>
-      <p class="lede">Answers based only on the official governing documents.</p>
-	    <img src="./waterfront.png"
-		alt="Waterfront Terrace"
-       style="display:block; margin:1rem auto; max-width:100%; border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,0.4);" />
-    </header>
+<div class="wrap">
+<header>
+<h1>Ask Waterfront Terrace <span class="tag">governance</span></h1>
+<p class="lede">Answers based only on the official governing documents.</p>
+<img alt="Waterfront Terrace" src="./waterfront.png" style="display:block; margin:1rem auto; max-width:100%; border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,0.4);"/>
+</header>
+<div class="hero">
+<p>Welcome to the <strong>Waterfront Terrace Governance Assistant</strong>. This tool provides clear, document-based answers to questions about how Halifax County Condominium Corporation No. 227 is governed. All responses are drawn strictly from the official governing documents — including the Declaration, By-laws, and the Nova Scotia Condominium Act and Regulations. If the information is not in these documents, the assistant will tell you so. Use this page to quickly find accurate guidance on meetings, voting, common element rules, contractor access, financial authority, and more.</p>
+</div>
+<div class="card"><form id="form">
+<textarea id="q" placeholder="Ask a question about your docs…" required=""></textarea>
+<button id="send">Ask</button>
+</form><div aria-busy="false" aria-live="polite" id="chat"></div>
 
-    <div class="hero">
-      <p>Welcome to the <strong>Waterfront Terrace Governance Assistant</strong>. This tool provides clear, document-based answers to questions about how Halifax County Condominium Corporation No. 227 is governed. All responses are drawn strictly from the official governing documents — including the Declaration, By-laws, and the Nova Scotia Condominium Act and Regulations. If the information is not in these documents, the assistant will tell you so. Use this page to quickly find accurate guidance on meetings, voting, common element rules, contractor access, financial authority, and more.</p>
-    </div>
 
-    <div class="card">
-      <div id="chat" aria-live="polite" aria-busy="false"></div>
-      <form id="form">
-        <textarea id="q" placeholder="Ask a question about your docs…" required></textarea>
-        <button id="send">Ask</button>
-      </form>
-      <div class="sources" id="sources"></div>
-    </div>
-
-    <footer>Pro tip: ask specific questions for best retrieval (e.g., “What are the quarterly reporting requirements?”).</footer>
-  </div>
-
+<div class="sources" id="sources"></div>
+</div>
+<footer>Pro tip: ask specific questions for best retrieval (e.g., “What are the quarterly reporting requirements?”).</footer>
+</div>
 <script>
 const chat = document.getElementById('chat');
 const form = document.getElementById('form');
