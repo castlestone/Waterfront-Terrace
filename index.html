@@ -80,14 +80,12 @@
 <div class="hero">
 <p>Welcome to the <strong>Waterfront Terrace Governance Assistant</strong>. This tool provides clear, document-based answers to questions about how Halifax County Condominium Corporation No. 227 is governed. All responses are drawn strictly from the official governing documents — including the Declaration, By-laws, and the Nova Scotia Condominium Act and Regulations. If the information is not in these documents, the assistant will tell you so. Use this page to quickly find accurate guidance on meetings, voting, common element rules, contractor access, financial authority, and more.</p>
 </div>
-<div class="card"><form id="form">
+<div class="card">
+
+<div aria-busy="false" aria-live="polite" id="chat"></div><div class="sources" id="sources"></div><form id="form">
 <textarea id="q" placeholder="Ask a question about your docs…" required=""></textarea>
 <button id="send">Ask</button>
-</form><div aria-busy="false" aria-live="polite" id="chat"></div>
-
-
-<div class="sources" id="sources"></div>
-</div>
+</form></div>
 <footer>Pro tip: ask specific questions for best retrieval (e.g., “What are the quarterly reporting requirements?”).</footer>
 </div>
 <script>
